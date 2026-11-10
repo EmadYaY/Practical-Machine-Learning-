@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Step 03 - Evaluation protocols + baseline KNN (k=1, p=2) on RAW vs DEDUP data.
-The TEST subset is NOT used here (kept locked for the final evaluation).
 Input : outputs/data/dataset_raw.csv, outputs/data/dataset_dedup.csv
 """
 import os
