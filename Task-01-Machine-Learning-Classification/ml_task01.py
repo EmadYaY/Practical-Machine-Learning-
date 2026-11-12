@@ -3,7 +3,7 @@
 ML Task-01 - Phishing website detection: KNN vs Decision Tree (single-file pipeline).
 
 Usage : python ml_task01.py [phishing.csv]
-Output: outputs/figures (png+pdf), outputs/tables (csv), outputs/tex (tabular bodies), outputs/run.log
+Output: outputs_compact/{figures (png+pdf), tables (csv), tex (tabular bodies), run.log}
 
 Protocol: duplicates merged -> stratified 60/20/20 split. All hyper-parameters are chosen by
 5-fold CV on TRAIN only. The TEST set is opened exactly once (section 5).
@@ -31,7 +31,7 @@ import logging
 # ------------------------------------------------------------------ config
 SEED, EPS, N_BOOT, N_EPOCHS = 42, 1e-3, 2000, 150
 DATA = sys.argv[1] if len(sys.argv) > 1 else "phishing.csv"
-OUT = "outputs"
+OUT = "outputs_compact"
 FIG, TAB, TEX = (os.path.join(OUT, d) for d in ("figures", "tables", "tex"))
 for d in (FIG, TAB, TEX):
     os.makedirs(d, exist_ok=True)
@@ -192,6 +192,20 @@ sw = pd.DataFrame(rows)
 tex("knn_k_sweep", sw[sw.K.isin([1, 2, 3, 5, 7, 9, 11, 15, 21, 30])], bold={"cv_mean": "max", "val_bce": "min"})
 k_star = int(sw.sort_values(["cv_mean", "cv_std", "K"], ascending=[False, True, False]).K.iloc[0])
 log("K sweep: best K by CV = %d", k_star)
+
+# effect of leakage: same KNN sweep on the raw (duplicated) split vs the deduplicated split
+raw_tr, raw_va = (sp["raw"][sp["raw"].subset == s] for s in ("train", "val"))
+sw_raw = pd.DataFrame([dict(K=k, **evaluate(knn(k), raw_tr[FEATS], raw_tr.y.values, raw_va[FEATS], raw_va.y.values))
+                       for k in K_ALL])
+
+
+def leak_row(name, s):
+    b = s.sort_values(["cv_mean", "cv_std", "K"], ascending=[False, True, False]).iloc[0]
+    return {"Dataset": name, "Val acc. (K=1)": float(s.val_acc[s.K == 1].iloc[0]), "Best K (CV)": int(b.K),
+            "CV acc.": b.cv_mean, "Val acc. (best K)": b.val_acc}
+
+
+tex("leakage_effect", pd.DataFrame([leak_row("raw", sw_raw), leak_row("dedup", sw)]))
 fig, ax = plt.subplots(1, 2, figsize=(13, 4.8))
 ax[0].plot(sw.K, sw.train_acc, "o-", label="Training")
 ax[0].plot(sw.K, sw.cv_mean, "s-", label="5-fold CV (train)")
@@ -330,24 +344,27 @@ SPECS = {"KNN baseline": ("ordinal", KNeighborsClassifier(n_neighbors=1)),
          "KNN best": (kcfg["rep"], knn(kcfg["K"], kcfg["metric"], kcfg["weights"])),
          "DT class-style": ("ordinal", dt(criterion="entropy", max_depth=4)),
          "DT final": (REP, dt(**KW))}
-R = {}
+R, TRAIN_ERR = {}, {}                    # TRAIN_ERR: error on the fit set itself (resubstitution)
 for name, (rep_name, est) in SPECS.items():
     f = make_rep(rep_name, Xfit)
     m = est.fit(f(Xfit), yfit)
     R[name] = (m.predict(f(Xte)), m.predict_proba(f(Xte))[:, 1])
+    TRAIN_ERR[name] = 1 - accuracy_score(yfit, m.predict(f(Xfit)))
 f = make_rep("onehot", Xfit)
+Ofit = f(Xfit).values.astype(float)
 m = mlp()
 for _ in range(E_STAR):
-    m.partial_fit(f(Xfit).values.astype(float), yfit, classes=np.array([0, 1]))
+    m.partial_fit(Ofit, yfit, classes=np.array([0, 1]))
 s = m.predict_proba(f(Xte).values.astype(float))[:, 1]
-R["MLP"] = ((s >= 0.5).astype(int), s)
+R["MLP"], TRAIN_ERR["MLP"] = ((s >= 0.5).astype(int), s), 1 - accuracy_score(yfit, m.predict(Ofit))
 names = list(R)
 
-tm = pd.DataFrame([dict(model=n, accuracy=accuracy_score(yte, p), precision=precision_score(yte, p),
+tm = pd.DataFrame([dict(model=n, train_error=TRAIN_ERR[n], test_error=1 - accuracy_score(yte, p),
+                        accuracy=accuracy_score(yte, p), precision=precision_score(yte, p),
                         recall=recall_score(yte, p), f1=f1_score(yte, p), roc_auc=roc_auc_score(yte, s_),
                         bce=bce(yte, s_)) for n, (p, s_) in R.items()])
-tex("test_metrics", tm, bold={"accuracy": "max", "precision": "max", "recall": "max", "f1": "max",
-                              "roc_auc": "max", "bce": "min"})
+tex("test_metrics", tm, bold={"test_error": "min", "accuracy": "max", "precision": "max", "recall": "max",
+                              "f1": "max", "roc_auc": "max", "bce": "min"})
 log("TEST metrics:\n%s", tm.round(4).to_string(index=False))
 pd.DataFrame({"y_true": yte, **{f"{n}__pred": R[n][0] for n in names},
               **{f"{n}__score": R[n][1] for n in names}}).to_csv(f"{TAB}/test_predictions.csv", index=False)
