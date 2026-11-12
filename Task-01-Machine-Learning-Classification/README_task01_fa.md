@@ -192,6 +192,9 @@ p = binomtest(na, na + nb, 0.5).pvalue        # McNemar exact
 | DT final (entropy، pruned، one-hot) | 0.9472 | 0.9525 | 0.9445 | 0.9485 | 0.9677 |
 | MLP (۴۵ epoch) | 0.9619 | 0.9615 | 0.9647 | 0.9631 | 0.9938 |
 
+درخت تصمیم:
+![Test confusion](outputs_compact/figures/fig05_tree_depth4.png)
+
 ## اجرا
 
 ```bash
